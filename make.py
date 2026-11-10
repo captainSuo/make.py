@@ -21,6 +21,7 @@ Terminal commands:
     $ python make.py clean      # Runs the clean task
 """
 
+import os
 import sys
 import subprocess
 import atexit
@@ -112,6 +113,10 @@ if __name__ == "__main__":
                 build(next(iter(TASKS)))
             else:
                 die("no targets defined")
+        except SystemExit as e:
+                sys.stdout.flush()
+                os._exit(int(e.code or 0))
+
 
 
 
