@@ -29,6 +29,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import NoReturn, TypeAlias
 from pathlib import Path
+from glob import glob
 
 TaskFunc: TypeAlias = Callable[[], None]
 TASKS: dict[str, 'Task'] = {}
@@ -65,7 +66,7 @@ def task(func: Callable, phony: bool = True) -> Task:
 
 
 def depend(*deps: str) -> Callable[[TaskFunc], TaskFunc]:
-    return lambda func: setattr(func, "deps", deps) or func
+    return lambda func: setattr(func, "deps", tuple(d for n in deps for d in (glob(n) or [n]))) or func
 
 
 def target(name: str) -> Callable[[TaskFunc], TaskFunc]:
