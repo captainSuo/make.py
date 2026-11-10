@@ -4,7 +4,7 @@ A lightweight, zero-dependency build system in pure Python.
 
 ## Quick Start
 
-Copy `make.py` to your working directory, and place your build logic below the `BUILD CODE HERE` marker.
+Copy `make.py` to your working directory, and place your build logic below the `BUILD CODE BELOW` marker.
 
 ```python
 # Build a target from a dependency

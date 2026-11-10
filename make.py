@@ -24,8 +24,8 @@ Terminal commands:
 import os
 import sys
 import subprocess
-import atexit
-from collections.abc import Callable
+import concurrent.futures
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import NoReturn, TypeAlias
 from pathlib import Path
@@ -50,7 +50,7 @@ class Task:
 
 
 def die(msg: str) -> NoReturn:
-    print(f"error: {msg}")
+    print(f"\033[1;91merror:\033[0m {msg}")
     sys.exit(1)
 
 
@@ -72,54 +72,91 @@ def target(name: str) -> Callable[[TaskFunc], TaskFunc]:
     return lambda func: task(setattr(func, "__name__", name) or func, False)
 
 
-def fetch_dep_mtime(dep: str, visited: set[str]) -> float:
-    if dep in TASKS:
-        build(dep, visited)
-
-    if not (p := Path(dep)).exists():
-        die(f"missing dep: {dep}")
-    return p.stat().st_mtime
+def gather(futures: Iterable[concurrent.futures.Future]):
+    return [f.result() for f in futures]
 
 
-def build(name: str, visited: set[str] | None = None) -> None:
-    if name in (visited := visited or set()): return
-    visited.add(name)
+def build(task_name: str) -> None:
+    if task_name not in TASKS:
+        die(f"no task named {task_name!r}")
 
-    if not (t := TASKS.get(name)):
-        die(f"unknown target: {name}")
+    tasks_to_run: list[Task] = []
+    names_visited: set[str]  = set()
+    names_dirty:   set[str]  = set()
 
-    max_mtime = max((fetch_dep_mtime(d, visited) for d in t.deps), default=0.0)
+    def get_mtime(dep: str) -> float:
+        if dep in names_dirty:
+            return float('inf')
+        return Path(dep).stat().st_mtime
 
-    if t.phony:
-        print(f"\033[93mbuild:\033[0m {t.name}")
-        return t()
+    def resolve(name: str) -> None:
+        if name in names_visited: return
+        names_visited.add(name)
 
-    t_path = Path(t.name)
-    if t_path.exists() and t_path.stat().st_mtime >= max_mtime:
-        return print(f"\033[92mskip:\033[0m {t.name} is up to date")
+        if not (t := TASKS.get(name)):
+            if not Path(name).exists():
+                die(f"missing dependency: {name}")
+            return
 
-    print(f"\033[93mbuild:\033[0m {t.name}")
-    t()
-    t_path.touch()
+        for dep in t.deps:
+            resolve(dep)
 
+        max_mtime = max((get_mtime(d) for d in t.deps), default=0.0)
+
+        if t.phony:
+            tasks_to_run.append(t)
+            names_dirty.add(t.name)
+        else:
+            t_path = Path(t.name)
+            if not t_path.exists() or t_path.stat().st_mtime < max_mtime:
+                tasks_to_run.append(t)
+                names_dirty.add(t.name)
+
+    resolve(task_name)
+    if not tasks_to_run:
+        return print(f"\033[1;93mskip:\033[0m {task_name} is up to date")
+
+    futures_by_name: dict[str, concurrent.futures.Future] = {}
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=os.cpu_count() or 4) as executor:
+        for t in tasks_to_run:
+            dep_futures = [futures_by_name[d] for d in t.deps if d in futures_by_name]
+
+            def run_task(task_obj: Task, deps_f: list[concurrent.futures.Future]):
+                gather(deps_f)
+                prefix = "\033[1;92mtarget:\033[0m" if task_obj.phony else "\033[1;92mbuild:\033[0m"
+                print(f"{prefix} {task_obj.name}")
+                task_obj()
+                if not task_obj.phony:
+                    Path(task_obj.name).touch()
+
+            futures_by_name[t.name] = executor.submit(run_task, t, dep_futures)
+
+        gather(futures_by_name.values())
+
+
+def main():
+    try:
+        build(sys.argv[1])
+    except IndexError:
+        if TASKS:
+            build(next(iter(TASKS)))
+        else:
+            die("no targets defined")
+    except SystemExit as e:
+        sys.stdout.flush()
+        os._exit(int(e.code or 0))
+    except Exception as e:
+        print(f"\033[1;91merror:\033[0m {e}")
+        sys.stdout.flush()
+        os._exit(1)
+
+
+# =========================================================
+#                  BUILD CODE BELOW
+# =========================================================
+
+# Place your task definations here.
 
 if __name__ == "__main__":
-    @atexit.register
-    def _main():
-        try:
-            build(sys.argv[1])
-        except IndexError:
-            if TASKS:
-                build(next(iter(TASKS)))
-            else:
-                die("no targets defined")
-        except SystemExit as e:
-                sys.stdout.flush()
-                os._exit(int(e.code or 0))
-
-
-
-
-# =========================================================
-#           BUILD CODE HERE
-# =========================================================
+    main()  # entry point of make.py
