@@ -56,7 +56,7 @@ def die(msg: str) -> NoReturn:
 
 def run(cmd: str, silent: bool = False) -> None:
     if not silent: print(cmd)
-    if subprocess.run(cmd, shell=True).returncode != 0:
+    if subprocess.run(cmd, shell=True, stdout=subprocess.DEVNULL if silent else None).returncode != 0:
         die(f"command failed: {cmd}")
 
 
